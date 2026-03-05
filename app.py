@@ -2,76 +2,82 @@ import streamlit as st
 import cv2
 from ultralytics import YOLO
 import tempfile
-import numpy as np
 
-# --- CẤU HÌNH TRANG ---
-st.set_page_config(page_title="AI Vehicle Detection", layout="wide")
+# --- THIẾT LẬP GIAO DIỆN ---
+st.set_page_config(page_title="AI Traffic Monitor", layout="centered")
 
-# CSS để làm đẹp giao diện và tạo các khối hộp (Card)
+# CSS tùy chỉnh để làm giao diện mượt mà và êm mắt hơn
 st.markdown("""
     <style>
-    .main { background-color: #0e1117; }
-    .stApp { color: white; }
-    .status-box {
-        background-color: #262730;
-        border-radius: 10px;
+    /* Nền tối sâu và phông chữ sạch */
+    .stApp { background-color: #0e1117; color: #e0e0e0; }
+    
+    /* Làm đẹp khung tải file */
+    .stFileUploader { border: 1px dashed #4b4b4b; border-radius: 10px; padding: 10px; }
+    
+    /* Khối hiển thị số lượng xe */
+    .counter-card {
+        background-color: #1f2937;
+        border-radius: 15px;
         padding: 20px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-    }
-    .author-footer {
         text-align: center;
-        padding: 20px;
-        font-size: 18px;
+        border: 1px solid #374151;
+        margin-bottom: 20px;
+    }
+    .counter-value {
+        color: #10b981; /* Màu xanh lá dịu mắt */
+        font-size: 60px;
         font-weight: bold;
-        color: #ff4b4b;
+        margin: 0;
+    }
+    
+    /* Footer tác giả */
+    .footer {
+        text-align: center;
+        margin-top: 50px;
+        color: #9ca3af;
+        font-size: 14px;
+        border-top: 1px solid #374151;
+        padding-top: 20px;
     }
     </style>
     """, unsafe_allow_html=True)
 
-# --- TIÊU ĐỀ ---
-st.markdown("<h1 style='text-align: center;'> Nhận dạng và đếm phương tiện xe</h1>", unsafe_allow_html=True)
-st.markdown("<p style='text-align: center;'>Tải lên video, hệ thống sẽ tự động nhận diện và đếm phương tiện.</p>", unsafe_allow_html=True)
+# --- TIÊU ĐỀ CHÍNH ---
+st.markdown("<h2 style='text-align: center;'>🚗 Hệ thống Nhận dạng & Đếm xe</h2>", unsafe_allow_html=True)
 
-# --- SIDEBAR: CẤU HÌNH ---
-with st.sidebar:
-    st.header("⚙️ Cấu hình hệ thống")
-    line_pos = st.slider("Vị trí vạch đếm (%)", 0, 100, 70)
-    conf_thresh = st.slider("Độ tin cậy mô hình", 0.0, 1.0, 0.25)
-    st.divider()
-    st.info("Hệ thống sử dụng mô hình Deep Learning YOLOv8 để phát hiện vật thể.")
+# --- KHU VỰC CÀI ĐẶT (ẨN TRONG EXPANDER) ---
+with st.expander("🛠 Cài đặt hệ thống (Tùy chỉnh vạch đếm & độ nhạy)"):
+    col_cfg1, col_cfg2 = st.columns(2)
+    with col_cfg1:
+        line_pos = st.slider("Vị trí vạch ngang (%)", 0, 100, 70)
+    with col_cfg2:
+        conf_thresh = st.slider("Độ nhạy mô hình (Confidence)", 0.1, 1.0, 0.25)
 
-# --- BỐ CỤC CHÍNH (2 CỘT) ---
-col1, col2 = st.columns(2)
-
-with col1:
-    st.subheader("📹 Video đầu vào")
-    uploaded_file = st.file_uploader("", type=["mp4", "avi", "mov"])
-
-with col2:
-    st.subheader("🖼 Video đã xử lý")
-    output_frame = st.empty() # Khung để hiển thị streaming video
-
-# --- KHỐI HIỂN THỊ KẾT QUẢ ---
-st.markdown("---")
-res_col1, res_col2 = st.columns([2, 1])
-with res_col2:
-    st.markdown('<div class="status-box">', unsafe_allow_html=True)
-    st.write("📊 **TỔNG SỐ XE ĐÃ ĐẾM**")
-    count_text = st.empty()
-    count_text.markdown("<h2 style='color: #ff4b4b; font-size: 48px;'>0</h2>", unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
-
-# --- LOGIC XỬ LÝ AI ---
-@st.cache_resource
-def get_model():
-    return YOLO('yolov8n.pt')
-
-model = get_model()
+# --- KHU VỰC TẢI VIDEO ---
+uploaded_file = st.file_uploader("Chọn video giao thông để bắt đầu...", type=["mp4", "mov", "avi"])
 
 if uploaded_file:
+    # Hiển thị số lượng xe ở phía trên video cho dễ nhìn
+    count_container = st.container()
+    with count_container:
+        st.markdown('<div class="counter-card">', unsafe_allow_html=True)
+        st.write("📊 TỔNG PHƯƠNG TIỆN")
+        count_display = st.empty()
+        count_display.markdown('<p class="counter-value">0</p>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    # Xử lý Video
     tfile = tempfile.NamedTemporaryFile(delete=False)
     tfile.write(uploaded_file.read())
     cap = cv2.VideoCapture(tfile.name)
+    
+    video_output = st.empty()
+    
+    # Load Model
+    @st.cache_resource
+    def load_yolo(): return YOLO('yolov8n.pt')
+    model = load_yolo()
     
     counter = 0
     tracked_ids = set()
@@ -83,7 +89,7 @@ if uploaded_file:
         h, w, _ = frame.shape
         line_y = int(h * (line_pos / 100))
         
-        # Chạy mô hình Tracking
+        # AI Tracking
         results = model.track(frame, persist=True, tracker="bytetrack.yaml", conf=conf_thresh, verbose=False)
         
         if results[0].boxes.id is not None:
@@ -93,23 +99,22 @@ if uploaded_file:
             for box, id in zip(boxes, ids):
                 cx, cy = int((box[0] + box[2]) / 2), int((box[1] + box[3]) / 2)
                 
-                # Vẽ khung nhận diện
-                cv2.rectangle(frame, (int(box[0]), int(box[1])), (int(box[2]), int(box[3])), (255, 75, 75), 2)
+                # Vẽ box mỏng và tinh tế hơn
+                cv2.rectangle(frame, (int(box[0]), int(box[1])), (int(box[2]), int(box[3])), (16, 185, 129), 1)
                 
-                # Logic đếm xe đi qua vạch
-                if line_y - 10 < cy < line_y + 10:
+                if line_y - 8 < cy < line_y + 8:
                     if id not in tracked_ids:
                         tracked_ids.add(id)
                         counter += 1
         
-        # Vẽ vạch đếm (Xanh lá)
-        cv2.line(frame, (0, line_y), (w, line_y), (0, 255, 0), 3)
+        # Vẽ vạch đếm mảnh
+        cv2.line(frame, (0, line_y), (w, line_y), (239, 68, 68), 2)
         
-        # Hiển thị kết quả real-time
-        count_text.markdown(f"<h2 style='color: #ff4b4b; font-size: 48px;'>{counter}</h2>", unsafe_allow_html=True)
-        output_frame.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), channels="RGB", use_container_width=True)
+        # Cập nhật kết quả
+        count_display.markdown(f'<p class="counter-value">{counter}</p>', unsafe_allow_html=True)
+        video_output.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), channels="RGB", use_container_width=True)
 
     cap.release()
 
-# --- FOOTER TÁC GIẢ ---
-st.markdown(f"<div class='author-footer'>Author: Trương Công Thành - 223332852</div>", unsafe_allow_html=True)
+# --- FOOTER ---
+st.markdown(f"<div class='footer'>Thiết kế bởi: Trương Công Thành - 223332852</div>", unsafe_allow_html=True)
