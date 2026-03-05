@@ -4,105 +4,95 @@ from ultralytics import YOLO
 import tempfile
 
 # --- THIẾT LẬP GIAO DIỆN ---
-st.set_page_config(page_title="AI Traffic Monitor Pro", layout="centered")
+st.set_page_config(page_title="AI Traffic Classifier Pro", layout="centered")
 
-# CSS để tối ưu hóa khả năng đọc (Readability) và màu sắc êm mắt
+# CSS tinh chỉnh: Giảm nền, tăng đậm chữ
 st.markdown("""
     <style>
-    /* Nền xanh than sâu chuyên nghiệp */
+    /* Nền màu xám xanh trung tính, không quá đen */
     .stApp {
-        background-color: #0f172a;
-        color: #f8fafc;
+        background-color: #1e293b; 
+        color: #ffffff;
     }
     
-    /* Làm nổi bật tiêu đề chính */
+    /* Tiêu đề trắng, đậm, sắc nét */
     h2 {
         color: #ffffff !important;
-        font-weight: 700 !important;
-        letter-spacing: -0.5px;
-        margin-bottom: 30px !important;
+        font-weight: 800 !important;
+        text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
     }
 
-    /* Tùy chỉnh hộp Expander (Cài đặt) */
-    .streamlit-expanderHeader {
-        background-color: #1e293b !important;
-        color: #38bdf8 !important; /* Màu xanh dương sáng dễ đọc */
-        border-radius: 8px !important;
+    /* Thẻ thống kê xe: Nằm trên 1 hàng, chữ đậm */
+    .stat-container {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 20px;
     }
-
-    /* Card hiển thị số lượng xe */
-    .counter-container {
-        background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
-        border: 1px solid #334155;
-        border-radius: 16px;
-        padding: 25px;
+    .stat-card {
+        flex: 1;
+        background: #334155;
+        border: 2px solid #475569;
+        border-radius: 12px;
+        padding: 10px;
         text-align: center;
-        margin-top: 20px;
     }
-    .counter-label {
-        color: #94a3b8;
-        font-size: 16px;
+    .stat-label {
+        color: #cbd5e1;
+        font-size: 13px;
+        font-weight: 900; /* Chữ đậm cực đại để dễ đọc */
         text-transform: uppercase;
-        letter-spacing: 2px;
+        margin-bottom: 5px;
     }
-    .counter-number {
-        color: #2dd4bf; /* Màu xanh Teal cực kỳ êm mắt */
-        font-size: 72px;
-        font-weight: 800;
-        margin: 10px 0;
+    .stat-value {
+        color: #2dd4bf; /* Màu xanh ngọc sáng */
+        font-size: 32px;
+        font-weight: 900;
+        line-height: 1;
     }
     
-    /* Footer rõ ràng hơn */
-    .footer-text {
+    /* Footer đậm nét */
+    .footer {
         text-align: center;
-        margin-top: 60px;
-        color: #64748b;
-        font-size: 15px;
-        font-weight: 500;
-        padding: 20px;
-        border-top: 1px solid #1e293b;
+        margin-top: 40px;
+        color: #f1f5f9;
+        font-size: 16px;
+        font-weight: 800;
+        border-top: 1px solid #475569;
+        padding-top: 20px;
     }
     </style>
     """, unsafe_allow_html=True)
 
-# --- TIÊU ĐỀ ---
-st.markdown("<h2>🚗 Hệ thống Giám sát & Đếm xe AI</h2>", unsafe_allow_html=True)
+st.markdown("<h2 style='text-align: center;'>📊 Phân loại & Đếm phương tiện AI</h2>", unsafe_allow_html=True)
 
 # --- CÀI ĐẶT THU GỌN ---
-with st.expander("⚙️ Cấu hình vạch đếm & Độ nhạy"):
+with st.expander("⚙️ Cài đặt hệ thống"):
     c1, c2 = st.columns(2)
-    with c1:
-        line_pos = st.slider("Vị trí vạch (%)", 0, 100, 70)
-    with c2:
-        conf_thresh = st.slider("Độ nhạy (Confidence)", 0.1, 1.0, 0.25)
+    with c1: line_pos = st.slider("Vị trí vạch (%)", 0, 100, 70)
+    with c2: conf_thresh = st.slider("Độ nhạy", 0.1, 1.0, 0.25)
 
-# --- KHU VỰC TẢI VIDEO ---
-uploaded_file = st.file_uploader("📤 Kéo thả video giao thông vào đây", type=["mp4", "mov", "avi"])
+uploaded_file = st.file_uploader("📤 Tải lên video để bắt đầu", type=["mp4", "mov", "avi"])
 
 if uploaded_file:
-    # Card hiển thị kết quả
-    st.markdown(f"""
-        <div class="counter-container">
-            <div class="counter-label">Tổng số phương tiện đã đếm</div>
-            <div id="counter-val" class="counter-number">0</div>
-        </div>
-    """, unsafe_allow_html=True)
+    # Định nghĩa các loại xe
+    class_names = {2: 'Ô tô', 3: 'Xe máy', 5: 'Xe bus', 7: 'Xe tải'}
+    counts = {name: 0 for name in class_names.values()}
     
-    # Placeholder để cập nhật số thực tế
-    count_placeholder = st.empty()
+    # Khu vực video
+    video_output = st.empty()
     
-    # Xử lý luồng Video
+    # Khu vực thống kê nằm ngay dưới video
+    stat_placeholder = st.empty()
+    
     tfile = tempfile.NamedTemporaryFile(delete=False)
     tfile.write(uploaded_file.read())
     cap = cv2.VideoCapture(tfile.name)
-    
-    video_display = st.empty()
     
     @st.cache_resource
     def load_model(): return YOLO('yolov8n.pt')
     model = load_model()
     
-    counter = 0
     tracked_ids = set()
 
     while cap.isOpened():
@@ -112,38 +102,41 @@ if uploaded_file:
         h, w, _ = frame.shape
         line_y = int(h * (line_pos / 100))
         
-        # YOLO Tracking
         results = model.track(frame, persist=True, tracker="bytetrack.yaml", conf=conf_thresh, verbose=False)
         
         if results[0].boxes.id is not None:
             boxes = results[0].boxes.xyxy.cpu().numpy()
             ids = results[0].boxes.id.int().cpu().numpy()
+            clss = results[0].boxes.cls.int().cpu().numpy()
             
-            for box, id in zip(boxes, ids):
-                cx, cy = int((box[0] + box[2]) / 2), int((box[1] + box[3]) / 2)
-                
-                # Vẽ khung mỏng màu Teal
-                cv2.rectangle(frame, (int(box[0]), int(box[1])), (int(box[2]), int(box[3])), (191, 212, 45), 1)
-                
-                if line_y - 8 < cy < line_y + 8:
-                    if id not in tracked_ids:
-                        tracked_ids.add(id)
-                        counter += 1
-        
-        # Vẽ vạch đếm màu xanh Cyan mờ
-        cv2.line(frame, (0, line_y), (w, line_y), (0, 255, 255), 2)
-        
-        # Cập nhật số đếm vào giao diện
-        count_placeholder.markdown(f"""
-            <div class="counter-container">
-                <div class="counter-label">Tổng số phương tiện đã đếm</div>
-                <div class="counter-number">{counter}</div>
-            </div>
-        """, unsafe_allow_html=True)
-        
-        video_display.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), use_container_width=True)
+            for box, id, cls in zip(boxes, ids, clss):
+                if cls in class_names:
+                    cx, cy = int((box[0] + box[2]) / 2), int((box[1] + box[3]) / 2)
+                    
+                    if line_y - 8 < cy < line_y + 8:
+                        if id not in tracked_ids:
+                            tracked_ids.add(id)
+                            counts[class_names[cls]] += 1
+                    
+                    # Vẽ khung nhận diện
+                    cv2.rectangle(frame, (int(box[0]), int(box[1])), (int(box[2]), int(box[3])), (45, 212, 191), 2)
+
+        # Hiển thị video trước
+        video_output.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), use_container_width=True)
+
+        # Hiển thị thống kê ngay dưới video trên cùng 1 hàng
+        stat_html = "<div class='stat-container'>"
+        for name, val in counts.items():
+            stat_html += f"""
+                <div class='stat-card'>
+                    <div class='stat-label'>{name}</div>
+                    <div class='stat-value'>{val}</div>
+                </div>"""
+        stat_html += "</div>"
+        stat_placeholder.markdown(stat_html, unsafe_allow_html=True)
+
+        cv2.line(frame, (0, line_y), (w, line_y), (251, 146, 60), 3)
 
     cap.release()
 
-# --- TÊN TÁC GIẢ ---
-st.markdown(f"<div class='footer-text'>Phát triển bởi: Trương Công Thành — MSSV: 223332852</div>", unsafe_allow_html=True)
+st.markdown(f"<div class='footer'>Tác giả: Trương Công Thành — MSSV: 223332852</div>", unsafe_allow_html=True)
